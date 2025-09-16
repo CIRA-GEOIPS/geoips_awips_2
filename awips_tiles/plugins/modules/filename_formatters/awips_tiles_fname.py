@@ -10,17 +10,25 @@ from geoips.filenames.base_paths import PATHS as gpaths
 
 LOG = logging.getLogger(__name__)
 
+# TODO: Remove the following import before pushing
+from ipdb import set_trace as shell
+
 interface = "filename_formatters"
-family = "xarray_area_product_to_filenames"
+family = "xarray_area_product_to_filename"
 name = "awips_tiles_fname"
 
-SENSOR_NAME_MAPPING = {
-    "abc": "xyz",
-    "ips": "geo",
+SOURCE_NAME_MAPPING = {
+    "abi": "ABI",
+    "ahi": "HFD",
+    "fci": "MFD",
+    "seviri": "MFD"
 }
 
-SATELLITE_MAPPING = {
-    "def": "jkl",
+PLATFORM_NAME_MAPPING = {
+    "goes-17": "WFD",
+    "goes-16": "EFD",
+    "himawari-8": "EFD",
+    "GK-2A":
 }
 
 
@@ -33,13 +41,18 @@ def call(
     extra_field=None,
 ):
     """Create Filenames for AWIPS Tiles."""
-    return assemble_windspeeds_text_full_fname(
-        basedir=basedir,
-        source_name=xarray_obj.source_name,
-        platform_name=xarray_obj.platform_name,
-        data_provider=xarray_obj.data_provider,
-        product_datetime=xarray_obj.start_datetime,
-        dt_format="%Y%m%d",
-        extension=extension,
-        creation_time=None,
-    )
+    if xarray_obj.attrs['source_name'] == "abi":
+        None
+    elif xarray_obj.attrs['source_name'] == "ahi":
+
+    shell()
+    # return assemble_windspeeds_text_full_fname(
+    #     basedir=basedir,
+    #     source_name=xarray_obj.source_name,
+    #     platform_name=xarray_obj.platform_name,
+    #     data_provider=xarray_obj.data_provider,
+    #     product_datetime=xarray_obj.start_datetime,
+    #     dt_format="%Y%m%d",
+    #     extension=extension,
+    #     creation_time=None,
+    # )

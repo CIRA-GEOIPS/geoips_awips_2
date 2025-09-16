@@ -26,12 +26,12 @@ from geoips.filenames.base_paths import PATHS as geoips_variables
 import satpy
 
 # TODO: Remove the following import before pushing
-from ipdb import set_trace as breakpoint
+from ipdb import set_trace as shell
 
 LOG = logging.getLogger(__name__)
 
 interface = "output_formatters"
-family = "xrdict_area_product_to_outlist"
+family = "xrdict_area_product_outfnames_to_outlist"
 name = "awips_tiled"
 
 
@@ -39,6 +39,7 @@ def call(
     xarray_dict,
     area_def,
     product_name,
+    output_fnames,
     working_directory=geoips_variables["GEOIPS_OUTDIRS"],
 ):
     """Write AWIPS2 compatible NetCDF files from SMAP or SMOS windspeed data.
@@ -57,7 +58,7 @@ def call(
     success_outputs = []
 
     ## DEBUGGING
-    breakpoint()
+    shell()
 
     scn = satpy.Scene()
     scn["xyz"] = xarray_dict["xyz"]
