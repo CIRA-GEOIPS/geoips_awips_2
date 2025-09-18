@@ -60,7 +60,6 @@ def call(
     source = SOURCE_NAME_MAPPING[xarray_obj.source_name]
     product = product_name.upper()
 
-    shell()
     return assemble_awips_tiles_fname(
         basedir=basedir,
         source_name=source,
