@@ -115,7 +115,7 @@ def assemble_awips_tiles_fname(
         [
             source_name,
             product_name,
-            "T<tilenum>"
+            "T{tilenum}"
         ]
     )
 
