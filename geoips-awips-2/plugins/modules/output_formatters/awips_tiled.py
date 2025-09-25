@@ -114,7 +114,8 @@ def split_dataset(
     """
     da = ds[product_name]
 
-    ny, nx = da.sizes[lat_name], da.sizes[lon_name]
+    ny = ds.dims['dim_0']
+    nx = ds.dims['dim_1']
 
     # Determine chunk sizes
     x_chunk = nx // ncols
