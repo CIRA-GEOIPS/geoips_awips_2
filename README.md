@@ -17,10 +17,10 @@ GeoIPS Plugin Template" section in the README.md, leaving the appropriate
 content for your package's README file.
 
 
-awips_tiles GeoIPS Plugin
+geoips_awips_2 GeoIPS Plugin
 ==========================
 
-The awips_tiles package is a GeoIPS-compatible plugin, intended to be used within
+The geoips_awips_2 package is a GeoIPS-compatible plugin, intended to be used within
 the GeoIPS ecosystem.  Please see the
 [GeoIPS Documentation](https://github.com/NRLMMD-GEOIPS/geoips#readme) for
 more information on the GeoIPS plugin architecture and base infrastructure.
@@ -28,7 +28,7 @@ more information on the GeoIPS plugin architecture and base infrastructure.
 Package Overview
 -----------------
 
-The awips_tiles plugin provides the capability for
+The geoips_awips_2 plugin provides the capability for
 
 @ Please include a brief description of what capability this package provides.
 
@@ -57,28 +57,28 @@ If GeoIPS Base is not yet installed, follow the
 [installation instructions](https://github.com/NRLMMD-GEOIPS/geoips#installation)
 within the geoips source repo documentation:
 
-Install awips_tiles package
+Install geoips_awips_2 package
 ----------------------------
 ```bash
 
     # Ensure GeoIPS Python environment is enabled.
 
-    # Clone and install awips_tiles
-    git clone https://github.com/NRLMMD-GEOIPS/awips_tiles $GEOIPS_PACKAGES_DIR/awips_tiles
-    pip install -e $GEOIPS_PACKAGES_DIR/awips_tiles
+    # Clone and install geoips_awips_2
+    git clone https://github.com/CIRA-GEOIPS/geoips_awips_2 $GEOIPS_PACKAGES_DIR/geoips_awips_2
+    pip install -e $GEOIPS_PACKAGES_DIR/geoips_awips_2
 
     # Add any additional clone/install/setup steps here
 ```
 
-Test awips_tiles installation
+Test geoips_awips_2 installation
 -----------------------------
 ```bash
 
     # Ensure GeoIPS Python environment is enabled.
 
     # This script will run ALL tests within this package
-    $GEOIPS_PACKAGES_DIR/awips_tiles/tests/test_all.sh
+    $GEOIPS_PACKAGES_DIR/geoips_awips_2/tests/test_all.sh
 
     # Individual direct test calls, for reference
-    $GEOIPS_PACKAGES_DIR/awips_tiles/tests/scripts/<test_script_name>.sh
+    $GEOIPS_PACKAGES_DIR/geoips_awips_2/tests/scripts/<test_script_name>.sh
 ```

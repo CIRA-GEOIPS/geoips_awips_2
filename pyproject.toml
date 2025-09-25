@@ -7,10 +7,10 @@
 
 [tool.poetry]
 # @ Update with your package name, ie:
-# @ name = "awips_tiles"  # package available at the root of the project
-name = "awips_tiles" # package available at the root of the project
+# @ name = "geoips_awips_2"  # package available at the root of the project
+name = "geoips_awips_2" # package available at the root of the project
 version = "0.0.0"
-description = "awips_tiles GeoIPS Plugin Package"
+description = "geoips_awips_2 GeoIPS Plugin Package"
 authors = []
 readme = "README.md"
 keywords = []
@@ -18,12 +18,12 @@ license = "LICENSE" # required
 classifiers = [ # // list of PyPI trove classifiers to describe the project
     "Programming Language :: Python :: 3",
 ]
-repository = "https://github.com/NRLMMD-GEOIPS/awips_tiles"
+repository = "https://github.com/CIRA-GEOIPS/geoips_awips_2"
 #documentation = "set the url"
 include = ["**/*.txt", "**/*.py", "**/*.yaml"]
 # @ Update with your package name, ie:
-# @ packages = [{include = "awips_tiles"}]  # package available at the root of the project
-packages = [{include = "awips_tiles"}]
+# @ packages = [{include = "geoips_awips_2"}]  # package available at the root of the project
+packages = [{include = "geoips_awips_2"}]
 
 # uses current version .postN and not incrementing
 [tool.poetry-dynamic-versioning]
@@ -51,10 +51,9 @@ build-backend = "poetry_dynamic_versioning.backend"                          # o
 [tool.poetry.dependencies] # Include any python dependencies here
 python = ">=3.10.0" # mandatory to declare the required python version
 xarray = "*"
-satpy = "*"
 
-# All plugins within the "awips_tiles" package are automatically discovered
+# All plugins within the "geoips_awips_2" package are automatically discovered
 # during the plugin registry process.
 
 [tool.poetry.plugins."geoips.plugin_packages"]
-"awips_tiles" = "awips_tiles"
+"geoips_awips_2" = "geoips_awips_2"
