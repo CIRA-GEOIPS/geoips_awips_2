@@ -1,9 +1,9 @@
 # # # This source code is subject to the license referenced at
 # # # https://github.com/NRLMMD-GEOIPS.
 
-"""Filename formatter for full-day text windspeed products."""
+"""Filename formatter for AWIPS tiles."""
 
-# TODO: Remove the following import before pushing
+# TODO: Remove the following debug statement
 from ipdb import set_trace as shell
 
 import logging
@@ -19,19 +19,11 @@ interface = "filename_formatters"
 family = "xarray_area_product_to_filename"
 name = "awips_tiles_fname"
 
-# Existing MAPPINGS remain
 SOURCE_NAME_MAPPING = {"abi": "ABI", "ahi": "HFD", "fci": "MFD", "seviri": "MFD"}
+
 PLATFORM_NAME_MAPPING = {"goes-17": "WFD", "goes-16": "EFD", "himawari-8": "EFD"}
 
-# New mapping for GeoColor RGB channels (extendable if needed)
-COLOR_MAPPING = {
-    "red": "R",
-    "green": "G",
-    "blue": "B",
-    "geocolor_r": "R",
-    "geocolor_g": "G",
-    "geocolor_b": "B",
-}
+COLOR_MAPPING = {"red": "R", "green": "G", "blue": "B"}
 
 
 def call(
@@ -84,7 +76,7 @@ def assemble_awips_tiles_fname(
     extension=".nc",
     creation_time=datetime.now(timezone.utc),
 ):
-    """Produce AWIPS output product path."""
+    """Produce AWIPS tiles output product path."""
     fname = "-".join([source_name, product_name, "T{tilenum}"])
     fname = "_".join(
         [
