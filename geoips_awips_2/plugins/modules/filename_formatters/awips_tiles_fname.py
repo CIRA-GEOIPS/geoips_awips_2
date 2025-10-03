@@ -1,7 +1,7 @@
 # # # This source code is subject to the license referenced at
 # # # https://github.com/NRLMMD-GEOIPS.
 
-"""Filename formatter for full-day text windspeed products."""
+"""Filename formatter for AWIPS tiles."""
 
 # TODO: Remove the following import before pushing
 from ipdb import set_trace as shell
@@ -19,18 +19,23 @@ interface = "filename_formatters"
 family = "xarray_area_product_to_filename"
 name = "awips_tiles_fname"
 
-# Existing MAPPINGS remain
-SOURCE_NAME_MAPPING = {"abi": "ABI", "ahi": "HFD", "fci": "MFD", "seviri": "MFD"}
-PLATFORM_NAME_MAPPING = {"goes-17": "WFD", "goes-16": "EFD", "himawari-8": "EFD"}
+SOURCE_NAME_MAPPING = {
+    "abi": "ABI",
+    "ahi": "HFD",
+    "fci": "MFD",
+    "seviri": "MFD"
+}
 
-# New mapping for GeoColor RGB channels (extendable if needed)
+PLATFORM_NAME_MAPPING = {
+    "goes-17": "WFD",
+    "goes-16": "EFD",
+    "himawari-8": "EFD"
+}
+
 COLOR_MAPPING = {
     "red": "R",
     "green": "G",
-    "blue": "B",
-    "geocolor_r": "R",
-    "geocolor_g": "G",
-    "geocolor_b": "B",
+    "blue": "B"
 }
 
 
@@ -84,7 +89,7 @@ def assemble_awips_tiles_fname(
     extension=".nc",
     creation_time=datetime.now(timezone.utc),
 ):
-    """Produce AWIPS output product path."""
+    """Produce AWIPS tiles output product path."""
     fname = "-".join([source_name, product_name, "T{tilenum}"])
     fname = "_".join(
         [
@@ -121,7 +126,13 @@ def assemble_geocolor_fname(
     time_str = start_datetime.strftime("%H%M")
 
     fname = "_".join(
-        ["RAMMB_A2ECFG_GEOC", color_letter, date_str, time_str, "T{tilenum}"]
+        [
+            "RAMMB_A2ECFG_GEOC",
+            color_letter,
+            date_str,
+            time_str,
+            "T{tilenum}"
+        ]
     )
 
     if extension:
