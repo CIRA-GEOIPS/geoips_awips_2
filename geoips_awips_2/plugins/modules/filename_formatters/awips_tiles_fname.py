@@ -3,7 +3,7 @@
 
 """Filename formatter for AWIPS tiles."""
 
-# TODO: Remove the following import before pushing
+# TODO: Remove the following debug statement
 from ipdb import set_trace as shell
 
 import logging
@@ -19,24 +19,11 @@ interface = "filename_formatters"
 family = "xarray_area_product_to_filename"
 name = "awips_tiles_fname"
 
-SOURCE_NAME_MAPPING = {
-    "abi": "ABI",
-    "ahi": "HFD",
-    "fci": "MFD",
-    "seviri": "MFD"
-}
+SOURCE_NAME_MAPPING = {"abi": "ABI", "ahi": "HFD", "fci": "MFD", "seviri": "MFD"}
 
-PLATFORM_NAME_MAPPING = {
-    "goes-17": "WFD",
-    "goes-16": "EFD",
-    "himawari-8": "EFD"
-}
+PLATFORM_NAME_MAPPING = {"goes-17": "WFD", "goes-16": "EFD", "himawari-8": "EFD"}
 
-COLOR_MAPPING = {
-    "red": "R",
-    "green": "G",
-    "blue": "B"
-}
+COLOR_MAPPING = {"red": "R", "green": "G", "blue": "B"}
 
 
 def call(
@@ -126,13 +113,7 @@ def assemble_geocolor_fname(
     time_str = start_datetime.strftime("%H%M")
 
     fname = "_".join(
-        [
-            "RAMMB_A2ECFG_GEOC",
-            color_letter,
-            date_str,
-            time_str,
-            "T{tilenum}"
-        ]
+        ["RAMMB_A2ECFG_GEOC", color_letter, date_str, time_str, "T{tilenum}"]
     )
 
     if extension:

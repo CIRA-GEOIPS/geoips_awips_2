@@ -10,7 +10,7 @@
 # # # for more details. If you did not receive the license, for more information see:
 # # # https://github.com/U-S-NRL-Marine-Meteorology-Division/
 
-"""Routines for writing SMAP or SMOS windspeed data in AWIPS2 compatible format."""
+"""Routines for writing AWIPS2 tiles."""
 import logging
 from pathlib import Path
 import xarray as xr
@@ -18,7 +18,7 @@ import numpy as np
 from geoips.filenames.base_paths import PATHS as GPATHS
 from datetime import datetime, timezone
 
-# TODO: Remove the following import before pushing
+# TODO: Remove the following debug statement
 from ipdb import set_trace as shell
 
 LOG = logging.getLogger(__name__)
@@ -26,6 +26,27 @@ LOG = logging.getLogger(__name__)
 interface = "output_formatters"
 family = "xrdict_area_product_outfnames_to_outlist"
 name = "awips_tiled"
+
+SATELLITE_CONSTANTS = {
+    "goes-18": {
+        "lon": -137,
+    },
+    "goes-17": {
+        "lon": -104.7,
+    },
+    "goes-16": {
+        "lon": -75.2,
+    },
+    "goes-19": {
+        "lon": -75.2
+    },
+    "himawari-8": {
+        "lon": 140.7,
+    },
+    "himawari-9": {
+        "lon": 140.7,
+    },
+}
 
 
 def call(
@@ -35,7 +56,7 @@ def call(
     output_fnames,
     working_directory=GPATHS["GEOIPS_OUTDIRS"],
 ):
-    """Write AWIPS2 compatible NetCDF files from SMAP or SMOS windspeed data.
+    """Write AWIPS2 compatible tiled data as NetCDF files.
 
     Parameters
     ----------
@@ -47,7 +68,7 @@ def call(
         The variable name in the dataset to split.
     output_fnames : list of str
         A list containing a filename template with "tilenum".
-        Example: ["OR_ABI-L3-PRVIS-T{tilenum}_WFD_s1999364245959_c1999364245959.nc"]
+        Example: ["OR_ABI-L3-PRVIS-T{tilenum}_WFD_s9999999_c9999999.nc"]
     working_directory : str
         Directory to write output files (default: GPATHS["GEOIPS_OUTDIRS"]).
 
@@ -84,6 +105,17 @@ def call(
     return written_files
 
 
+def _sanitize_attrs(attrs: dict) -> dict:
+    """Sanitize dataset attributes."""
+    clean = {}
+    for k, v in (attrs or {}).items():
+        if isinstance(v, (datetime.datetime, datetime.date)):
+            clean[k] = v.isoformat()
+        else:
+            clean[k] = v
+    return clean
+
+
 def split_dataset(
     ds,
     product_name,
@@ -114,18 +146,8 @@ def split_dataset(
     list of xr.Dataset
         List of smaller datasets (ncols * nrows).
     """
-
-    # Helper: sanitize ONLY variable attrs (datetime -> str)
-    def _sanitize_var_attrs(attrs: dict) -> dict:
-        clean = {}
-        for k, v in (attrs or {}).items():
-            if isinstance(v, (datetime.datetime, datetime.date)):
-                clean[k] = v.isoformat()
-            else:
-                clean[k] = v
-        return clean
-
     da = ds[product_name]
+    sat_consts = SATELLITE_CONSTANTS.get(ds.platform_name)
     # Identify data dims (assume last two are spatial)
     y_dim, x_dim = da.dims[-2], da.dims[-1]
     ny, nx = da.sizes[y_dim], da.sizes[x_dim]
@@ -158,7 +180,7 @@ def split_dataset(
             x_1d = lon2d.isel({y_dim: 0}).values  # shape (tile_cols,)
 
             # Build tile dataset: product variable uses ('y','x'); coords are 1D
-            var_attrs = _sanitize_var_attrs(sub_da.attrs)
+            var_attrs = _sanitize_attrs(sub_da.attrs)
             tile = xr.Dataset(
                 data_vars={
                     product_name: (("y", "x"), sub_da.values, var_attrs),
@@ -186,11 +208,21 @@ def split_dataset(
                 attrs={
                     "grid_mapping_name": "geostationary",
                     "latitude_of_projection_origin": [0],
-                    "longitude_of_projection_origin": [-137],
+                    # satellite sub-point THE ONLY VARYING VALUE
+                    #   probably good to get this dynamically
+                    #   or we could just create a case/switch statement
+                    #   google "nadir longitude of geostationary satellite {name}"
+                    "longitude_of_projection_origin": [sat_consts["lon"]],
+                    # -137 is GOES-West
+                    # should be varible based on the satellite metadata
                     "semi_major_axis": [6378137],
                     "semi_minor_axis": [6356752.31414],
+                    # radius of the earth in short/long directions
                     "perspective_point_height": [35786023],
+                    # the actual orbital distance for geostationary satellite
                     "sweep_angle_axis": "x",
+                    # direction that the satellite scans.
+                    # Ask deb if this is always true
                 },
             )
 
@@ -200,7 +232,12 @@ def split_dataset(
 
 
 def _build_tile_attrs(
-    ds, product_name, tile_row_offset, tile_col_offset, tile_lat, tile_lon
+    ds,
+    product_name,
+    tile_row_offset,
+    tile_col_offset,
+    tile_lat,
+    tile_lon
 ):
     """Construct attributes matching Fortran make_GEGEOC_ECFG_tiles.f90 output.
 
@@ -278,3 +315,45 @@ def _build_tile_attrs(
     }
 
     return attrs
+
+
+
+
+#        "title": "GeoColor AWIPS tiles for ECONUS (GOES-16)",
+#        "ICD_version": "ICD-GEO-16-001",
+#        "Conventions": "CF-1.6",
+#        "product_name": "GEGEOC-010-B12-M3C02",
+#        "satellite_id": "GEOCOLR",
+#        "projection": "Fixed Grid",
+#        "channel_id": 2,
+#        "central_wavelength": 0.64,
+#        "abi_mode": 3,
+#        "source_scene": "CONUS",
+#        "production_location": "RAMMB",
+#        "production_site": "RAMMB",
+#        "institution": "NOAA/NESDIS",
+#        "project": "GOES-R Series",
+#        "bit_depth": 12,
+#        "start_date_time": start_str,
+#        "time_coverage_start": start_str,
+#        "time_coverage_end": start_str,
+#        "product_center_latitude": lat_center,
+#        "product_center_longitude": lon_center,
+#        "tile_center_latitude": lat_center,
+#        "tile_center_longitude": lon_center,
+#        "tile_row_offset": int(tile_row_offset),
+#        "tile_column_offset": int(tile_col_offset),
+#        "product_rows": 1024,
+#        "product_columns": 1024,
+#        "product_tile_width": 1024,
+#        "product_tile_height": 1024,
+#        "number_product_tiles": 15,
+#        "pixel_x_size": 2.0,
+#        "pixel_y_size": 2.0,
+#        "source_spatial_resolution": 1.0,
+#        "request_spatial_resolution": 1.0,
+#        "periodicity": 5.0,
+#
+#        # === Dynamic ===
+#
+#        # === Static ===
