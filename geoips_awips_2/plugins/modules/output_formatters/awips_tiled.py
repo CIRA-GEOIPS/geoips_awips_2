@@ -16,7 +16,7 @@ from pathlib import Path
 import xarray as xr
 import numpy as np
 from geoips.filenames.base_paths import PATHS as GPATHS
-from datetime import datetime, timezone
+from datetime import datetime, date, timezone
 
 # TODO: Remove the following debug statement
 from ipdb import set_trace as shell
@@ -29,24 +29,33 @@ name = "awips_tiled"
 
 SATELLITE_CONSTANTS = {
     "goes-18": {
-        "lon": -137,
+        "longitude": -137,
+        "altitude": 3.5786023e7,
     },
     "goes-17": {
-        "lon": -104.7,
+        "longitude": -104.7,
+        "altitude": 3.5786023e7,
     },
     "goes-16": {
-        "lon": -75.2,
+        "longitude": -75.2,
+        "altitude": 3.5786023e7,
     },
     "goes-19": {
-        "lon": -75.2
+        "longitude": -75.2,
+        "altitude": 3.5786023e7,
     },
     "himawari-8": {
-        "lon": 140.7,
+        "longitude": 140.7,
+        "altitude": 3.5786023e7,
     },
     "himawari-9": {
-        "lon": 140.7,
+        "longitude": 140.7,
+        "altitude": 3.5786023e7,
     },
 }
+
+# Shared int16 fill for all packed variables
+INT16_FILL = np.int16(-999)
 
 
 def call(
@@ -54,7 +63,8 @@ def call(
     area_def,
     product_name,
     output_fnames,
-    working_directory=GPATHS["GEOIPS_OUTDIRS"],
+    fill_value=INT16_FILL,
+    title=None,
 ):
     """Write AWIPS2 compatible tiled data as NetCDF files.
 
@@ -68,9 +78,13 @@ def call(
         The variable name in the dataset to split.
     output_fnames : list of str
         A list containing a filename template with "tilenum".
-        Example: ["OR_ABI-L3-PRVIS-T{tilenum}_WFD_s9999999_c9999999.nc"]
-    working_directory : str
-        Directory to write output files (default: GPATHS["GEOIPS_OUTDIRS"]).
+        e.g. ["OR_ABI-L3-PRVIS-T{tilenum}_WFD_s9999999_c9999999.nc"]
+    fill_value : int, optional
+        The value we want to set instead of NaN in the final product.
+        Default: -999
+    title : str, optional
+        Title for global attributes. If None, it will be generated.
+        e.g. "<product_name> AWIPS tiles for <sector_name> (<platform_name>)"
 
     Returns
     -------
@@ -85,20 +99,22 @@ def call(
     if "tilenum" not in fname_template:
         raise ValueError("The output filename template must contain 'tilenum'")
 
-    working_dir = Path(working_directory)
-    working_dir.mkdir(parents=True, exist_ok=True)
-
     # Generate tiles
-    tiles = split_dataset(xarray_dict, product_name)
+    tiles = split_dataset(
+        xarray_dict,
+        product_name,
+        title=title,
+    )
 
     written_files = []
     for idx, tile in enumerate(tiles, start=1):
         tilenum_str = f"{idx:03d}"  # zero-padded index
         fname = fname_template.format(tilenum=tilenum_str)
-        fpath = working_dir / fname
+        fpath = Path(fname)
 
         # Write NetCDF
-        tile.to_netcdf(fpath)
+        enc = build_tile_encodings(tile, product_name, fill_value=fill_value)
+        tile.to_netcdf(fpath, engine="netcdf4", encoding=enc)
 
         written_files.append(str(fpath))
 
@@ -123,6 +139,7 @@ def split_dataset(
     nrows=10,
     lat_name="latitude",
     lon_name="longitude",
+    title=None,
 ):
     """Split an xarray Dataset variable into tiles.
 
@@ -140,6 +157,8 @@ def split_dataset(
         Name of latitude coordinate in the dataset (default: 'latitude').
     lon_name : str
         Name of longitude coordinate in the dataset (default: 'longitude').
+    title : str, optional
+        Title for global attributes. If None, it will be generated.
 
     Returns
     -------
@@ -212,7 +231,7 @@ def split_dataset(
                     #   probably good to get this dynamically
                     #   or we could just create a case/switch statement
                     #   google "nadir longitude of geostationary satellite {name}"
-                    "longitude_of_projection_origin": [sat_consts["lon"]],
+                    "longitude_of_projection_origin": [sat_consts["longitude"]],
                     # -137 is GOES-West
                     # should be varible based on the satellite metadata
                     "semi_major_axis": [6378137],
@@ -237,7 +256,12 @@ def _build_tile_attrs(
     tile_row_offset,
     tile_col_offset,
     tile_lat,
-    tile_lon
+    tile_lon,
+    ncols=8,
+    nrows=10,
+    resolution=0.5,
+    datetime_pattern="%Y-%m-%dT%H:%M:%S.%fZ",
+    title=None,
 ):
     """Construct attributes matching Fortran make_GEGEOC_ECFG_tiles.f90 output.
 
@@ -255,105 +279,247 @@ def _build_tile_attrs(
         Latitude array for this tile (used for center computation).
     tile_lon : np.ndarray
         Longitude array for this tile.
+    ncols : int, default=8
+        Number of tiles along the x-direction in the full product.
+    nrows : int, default=10
+        Number of tiles along the y-direction in the full product.
+    resolution : float, default=0.5
+        Kilometers per pixel.
+    datetime_pattern : str, default="YYYY-mm-ddTHH:MM:SS.fZ"
+        Display pattern used for times.
+    title : str, optional
+        Title for global attributes. If None, a default will be generated.
 
     Returns
     -------
     dict
         Dictionary of NetCDF global attributes.
     """
-    # --- Temporal attributes ---
-    startdatetime = getattr(ds, "start_datetime", datetime.now(timezone.utc))
-    start_str = startdatetime.strftime("%Y%m%d_%H%M")
+    # Pull the source variable and full product shape. If it's not there, error.
+    if product_name not in ds:
+        raise KeyError(f"Expected variable '{product_name}' in dataset.")
+    var = ds[product_name]
+    if var.ndim < 2:
+        raise ValueError(f"Variable '{product_name}' must be at least 2D (got {var.ndim}D).")
+    y_dim, x_dim = var.dims[-2], var.dims[-1]
+    product_rows = int(var.sizes[y_dim])
+    product_columns = int(var.sizes[x_dim])
 
-    # --- Compute geographic centers ---
-    lat_center = float(tile_lat.mean())
-    lon_center = float(tile_lon.mean())
+    # Validate required dataset fields; fail fast to catch upstream issues.
+    if not hasattr(ds, "platform_name"):
+        raise AttributeError("Dataset is missing 'platform_name'.")
+    platform_name = ds.platform_name
 
-    # --- Build attributes dictionary ---
+    # Satellite constants are mandatory
+    platform_key = str(platform_name).lower()
+    if platform_key not in SATELLITE_CONSTANTS:
+        raise KeyError(f"No SATELLITE_CONSTANTS entry for platform '{platform_name}'.")
+    sat_consts = SATELLITE_CONSTANTS[platform_key]
+    if "longitude" not in sat_consts or "altitude" not in sat_consts:
+        raise KeyError(f"SATELLITE_CONSTANTS for '{platform_name}'"
+                       + "must include 'longitude' and 'altitude'.")
+    subpoint_lon = float(sat_consts["longitude"])
+    sat_alt_m = float(sat_consts["altitude"])
+
+    if not hasattr(ds, "area_definition"):
+        raise AttributeError("Dataset is missing 'area_definition' for source_scene derivation.")
+    area_def = ds.area_definition
+    # Prefer area_id; if it doesn't exist, error.
+    scene = getattr(area_def, "area_id", None)
+    if scene is None:
+        raise AttributeError("area_definition must expose 'area_id' for source_scene.")
+    source_scene = str(scene)
+
+    if not hasattr(ds, "start_datetime"):
+        raise AttributeError("Dataset is missing 'start_datetime'.")
+    start_dt = ds.start_datetime
+    if not isinstance(start_dt, datetime):
+        raise TypeError("'start_datetime' must be a datetime.datetime object.")
+    # Always write UTC and format with the provided pattern.
+    start_dt_utc = start_dt.astimezone(timezone.utc)
+    start_str = start_dt_utc.strftime(datetime_pattern)
+
+    # creation_time is 'now' in UTC with the same pattern.
+    creation_time = datetime.now(timezone.utc).strftime(datetime_pattern)
+
+    if title is None:
+        title = f"{product_name} AWIPS tiles for {source_scene} ({platform_name})"
+    title = str(title)
+
+    # Compute tile centers from the 1D coordinate vectors.
+    if tile_lat.size == 0 or tile_lon.size == 0:
+        raise ValueError("tile_lat and tile_lon must be non-empty 1D arrays.")
+    tile_center_latitude = float(np.nanmean(tile_lat))
+    tile_center_longitude = float(np.nanmean(tile_lon))
+
+    # Product center equals satellite sub-point by design.
+    product_center_latitude = 0.0
+    product_center_longitude = subpoint_lon
+
+    # Assemble attributes exactly as requested.
     attrs = {
-        # === General metadata ===
-        "title": "GeoColor AWIPS tiles for ECONUS (GOES-16)",
-        "ICD_version": "ICD-GEO-16-001",
-        "Conventions": "CF-1.6",
-        "product_name": "GEGEOC-010-B12-M3C02",  # Typically determined by band (can be parameterized)
-        "satellite_id": "GEOCOLR",
-        "projection": "Fixed Grid",
-        # === Channel and band metadata ===
-        "channel_id": 2,
-        "central_wavelength": 0.64,
-        "abi_mode": 3,
-        # === Source and production info ===
-        "source_scene": "CONUS",
-        "production_location": "RAMMB",
-        "production_site": "RAMMB",
-        "institution": "NOAA/NESDIS",
-        "project": "GOES-R Series",
-        "bit_depth": 12,
-        # === Temporal coverage ===
+        # === Dynamic ===
+        "creation_time": creation_time,
+        "number_product_tiles": int(ncols * nrows),
+        "pixel_x_size": float(resolution),
+        "pixel_y_size": float(resolution),
+        "product_center_latitude": product_center_latitude,
+        "product_center_longitude": product_center_longitude,
+        "product_columns": product_columns,
+        "product_name": product_name.upper(),
+        "product_rows": product_rows,
+        "product_tile_height": int(tile_lat.size),
+        "product_tile_width": int(tile_lon.size),
+        "satellite_altitude": sat_alt_m,
+        "satellite_id": str(platform_name),
+        "satellite_latitude": product_center_latitude,
+        "satellite_longitude": product_center_longitude,
+        "source_scene": source_scene,
         "start_date_time": start_str,
-        "time_coverage_start": start_str,
-        "time_coverage_end": start_str,
-        # === Tile geometry ===
-        "product_center_latitude": lat_center,
-        "product_center_longitude": lon_center,
-        "tile_center_latitude": lat_center,
-        "tile_center_longitude": lon_center,
-        "tile_row_offset": int(tile_row_offset),
+        "tile_center_latitude": tile_center_latitude,
+        "tile_center_longitude": tile_center_longitude,
         "tile_column_offset": int(tile_col_offset),
-        "product_rows": 1024,
-        "product_columns": 1024,
-        "product_tile_width": 1024,
-        "product_tile_height": 1024,
-        "number_product_tiles": 15,
-        # === Spatial resolution ===
-        "pixel_x_size": 2.0,
-        "pixel_y_size": 2.0,
-        "source_spatial_resolution": 1.0,
-        "request_spatial_resolution": 1.0,
-        # === Temporal periodicity ===
-        "periodicity": 5.0,
+        "tile_row_offset": int(tile_row_offset),
+        "time_coverage_end": start_str,
+        "time_coverage_start": start_str,
+        "title": title,
+
+        # === Static ===
+        "bit_depth": 16,
+        "channel_id": 17,
+        "Conventions": "CF-1.7",
+        "central_wavelength": 0.64,
+        "creator": "GeoIPS",
+        "production_location": "CIRA",
+        "projection": "fixedgrid_projection",
     }
+
+    # Only ABI gets abi_mode
+    source_name = getattr(ds, "source_name", None)
+    if source_name is None:
+        raise AttributeError("Dataset is missing 'source_name' (needed for ABI-only abi_mode).")
+    if str(source_name).lower() == "abi":
+        attrs["abi_mode"] = 1
 
     return attrs
 
 
+def _compute_scale_and_offset(data, codes_max=32767):
+    """Compute (scale_factor, add_offset) for packing to int16.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Input numeric array; only finite values are considered.
+    codes_max : int, optional
+        Maximum positive code value to map data into (default: 32767).
+
+    Returns
+    -------
+    tuple of float
+        (scale_factor, add_offset) that maps finite data to [0, codes_max].
+    """
+    finite_mask = np.isfinite(data)
+    if not np.any(finite_mask):
+        return 1.0, 0.0
+
+    data_min = float(np.nanmin(data[finite_mask]))
+    data_max = float(np.nanmax(data[finite_mask]))
+
+    if data_max == data_min:
+        return 1.0, data_min
+
+    scale_factor = (data_max - data_min) / float(codes_max)
+    if scale_factor == 0.0 or not np.isfinite(scale_factor):
+        scale_factor = 1.0
+
+    return scale_factor, data_min
 
 
-#        "title": "GeoColor AWIPS tiles for ECONUS (GOES-16)",
-#        "ICD_version": "ICD-GEO-16-001",
-#        "Conventions": "CF-1.6",
-#        "product_name": "GEGEOC-010-B12-M3C02",
-#        "satellite_id": "GEOCOLR",
-#        "projection": "Fixed Grid",
-#        "channel_id": 2,
-#        "central_wavelength": 0.64,
-#        "abi_mode": 3,
-#        "source_scene": "CONUS",
-#        "production_location": "RAMMB",
-#        "production_site": "RAMMB",
-#        "institution": "NOAA/NESDIS",
-#        "project": "GOES-R Series",
-#        "bit_depth": 12,
-#        "start_date_time": start_str,
-#        "time_coverage_start": start_str,
-#        "time_coverage_end": start_str,
-#        "product_center_latitude": lat_center,
-#        "product_center_longitude": lon_center,
-#        "tile_center_latitude": lat_center,
-#        "tile_center_longitude": lon_center,
-#        "tile_row_offset": int(tile_row_offset),
-#        "tile_column_offset": int(tile_col_offset),
-#        "product_rows": 1024,
-#        "product_columns": 1024,
-#        "product_tile_width": 1024,
-#        "product_tile_height": 1024,
-#        "number_product_tiles": 15,
-#        "pixel_x_size": 2.0,
-#        "pixel_y_size": 2.0,
-#        "source_spatial_resolution": 1.0,
-#        "request_spatial_resolution": 1.0,
-#        "periodicity": 5.0,
-#
-#        # === Dynamic ===
-#
-#        # === Static ===
+def build_int16_encoding(
+    data_array,
+    fill_value=INT16_FILL,
+    codes_max=32767,
+):
+    """Build xarray/netCDF encoding for packing a float array to int16.
+
+    Parameters
+    ----------
+    data_array : xr.DataArray
+        Source data to be written; may contain NaNs.
+    fill_value : np.int16, optional
+        int16 storage value for missing data (default: -999).
+    zlib : bool, optional
+        Enable zlib compression (default: True).
+    complevel : int, optional
+        Compression level 0–9 (default: 4).
+    codes_max : int, optional
+        Maximum positive code value to map data into (default: 32767).
+
+    Returns
+    -------
+    dict
+        Encoding dictionary for use with xarray's to_netcdf().
+    """
+    scale_factor, add_offset = _compute_scale_and_offset(
+        data_array.values, codes_max=codes_max
+    )
+    return {
+        "dtype": "int16",
+        "_FillValue": np.int16(fill_value),
+        "scale_factor": np.float32(scale_factor),
+        "add_offset": np.float32(add_offset),
+    }
+
+
+def build_tile_encodings(
+    tile_dataset,
+    product_name,
+    x_name="x",
+    y_name="y",
+    fill_value=INT16_FILL,
+    codes_max=32767,
+):
+    """Build combined encodings for product, x, and y variables in a tile.
+
+    Parameters
+    ----------
+    tile_dataset : xr.Dataset
+        Dataset containing the product, x, and y variables.
+    product_name : str
+        Name of the product variable in the dataset.
+    x_name : str, optional
+        Name of the x coordinate variable (default: "x").
+    y_name : str, optional
+        Name of the y coordinate variable (default: "y").
+    fill_value : np.int16, optional
+        int16 storage value for missing data (default: -999).
+    zlib : bool, optional
+        Enable zlib compression (default: True).
+    complevel : int, optional
+        Compression level 0–9 (default: 4).
+    codes_max : int, optional
+        Maximum positive code value to map data into (default: 32767).
+
+    Returns
+    -------
+    dict
+        Mapping of variable name -> encoding dict suitable for to_netcdf().
+    """
+    encodings = {}
+    encodings[product_name] = build_int16_encoding(
+        tile_dataset[product_name],
+        fill_value=fill_value,
+        codes_max=codes_max,
+    )
+    encodings[x_name] = build_int16_encoding(
+        tile_dataset[x_name],
+        fill_value=fill_value,
+        codes_max=codes_max,
+    )
+    encodings[y_name] = build_int16_encoding(
+        tile_dataset[y_name],
+        fill_value=fill_value,
+        codes_max=codes_max,
+    )
+    return encodings
