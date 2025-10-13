@@ -65,8 +65,10 @@ def call(
     output_fnames,
     fill_value=INT16_FILL,
     title=None,
-    ncols=None,
-    nrows=None,
+    tile_ncols=8,
+    tile_nrows=10,
+    total_pixel_height=None,
+    total_pixel_width=None
 ):
     """Write AWIPS2 compatible tiled data as NetCDF files.
 
@@ -101,11 +103,44 @@ def call(
     if "tilenum" not in fname_template:
         raise ValueError("The output filename template must contain 'tilenum'")
 
+    # If a target is provided, compute the padded target
+    if (total_pixel_height is not None) or (total_pixel_width is not None):
+        var = xarray_dict[product_name]
+        y_dim, x_dim = var.dims[-2], var.dims[-1]
+        ny, nx = var.sizes[y_dim], var.sizes[x_dim]
+
+        target_h = total_pixel_height if total_pixel_height is not None else ny
+        target_w = total_pixel_width if total_pixel_width is not None else nx
+
+        # Never shrink; only pad
+        target_h = max(target_h, ny)
+        target_w = max(target_w, nx)
+
+        # Error if the target size is incompatible with the tiling layout
+        rem = target_h % tile_nrows
+        if rem != 0:
+            raise ValueError("`target_pixel_height` must be divisible by `tile_nrows`")
+        rem = target_w % tile_ncols
+        if rem != 0:
+            raise ValueError("`target_pixel_width` must be divisible by `tile_ncols`")
+
+        # Apply symmetric NaN padding to the product and lat/lon (if present)
+        xarray_dict = _pad_to_target(
+            xarray_dict,
+            product_name,
+            target_h,
+            target_w,
+            lat_name="latitude",
+            lon_name="longitude"
+        )
+
     # Generate tiles
     tiles = split_dataset(
         xarray_dict,
         product_name,
         title=title,
+        ncols=tile_ncols,
+        nrows=tile_nrows,
     )
 
     written_files = []
@@ -537,3 +572,62 @@ def build_tile_encodings(
         codes_max=codes_max,
     )
     return encodings
+
+
+def _pad_to_target(ds, product_name, target_h, target_w, lat_name="latitude", lon_name="longitude"):
+    """
+    Symmetrically pad dataset on all sides to reach (target_h, target_w) in the
+    product's last-two spatial dimensions. Padding uses NaNs.
+    Only the product variable and lat/lon (if present on the same dims) are padded.
+    """
+    var = ds[product_name]
+    y_dim, x_dim = var.dims[-2], var.dims[-1]
+    ny, nx = var.sizes[y_dim], var.sizes[x_dim]
+
+    # Final target cannot be smaller than current size
+    th = max(int(target_h), ny)
+    tw = max(int(target_w), nx)
+
+    # No-op if already at (or beyond) target size in both dims
+    if th == ny and tw == nx:
+        return ds
+
+    dy = th - ny
+    dx = tw - nx
+
+    # Extra pixel goes bottom/right
+    pad_top = dy // 2
+    pad_bottom = dy - pad_top
+    pad_left = dx // 2
+    pad_right = dx - pad_left
+
+    pad_spec = {y_dim: (pad_top, pad_bottom), x_dim: (pad_left, pad_right)}
+
+    padded = ds.copy()
+
+    # Pad the product variable
+    if product_name in padded:
+        padded[product_name] = padded[product_name].pad(
+            pad_width=pad_spec,
+            constant_values=np.nan,
+        )
+
+    # Pad latitude if present
+    if lat_name in padded:
+        lat_da = padded[lat_name]
+        if lat_da.dims[-2:] == (y_dim, x_dim):
+            padded[lat_name] = lat_da.pad(
+                pad_width=pad_spec,
+                constant_values=np.nan,
+            )
+
+    # Pad longitude if present
+    if lon_name in padded:
+        lon_da = padded[lon_name]
+        if lon_da.dims[-2:] == (y_dim, x_dim):
+            padded[lon_name] = lon_da.pad(
+                pad_width=pad_spec,
+                constant_values=np.nan,
+            )
+
+    return padded
