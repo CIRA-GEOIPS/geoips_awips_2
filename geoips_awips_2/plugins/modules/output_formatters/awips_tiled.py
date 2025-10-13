@@ -65,6 +65,8 @@ def call(
     output_fnames,
     fill_value=INT16_FILL,
     title=None,
+    ncols=None,
+    nrows=None,
 ):
     """Write AWIPS2 compatible tiled data as NetCDF files.
 
@@ -125,7 +127,7 @@ def _sanitize_attrs(attrs: dict) -> dict:
     """Sanitize dataset attributes."""
     clean = {}
     for k, v in (attrs or {}).items():
-        if isinstance(v, (datetime.datetime, datetime.date)):
+        if isinstance(v, (datetime, date)):
             clean[k] = v.isoformat()
         else:
             clean[k] = v
@@ -200,6 +202,11 @@ def split_dataset(
 
             # Build tile dataset: product variable uses ('y','x'); coords are 1D
             var_attrs = _sanitize_attrs(sub_da.attrs)
+            var_attrs["coordinates"] = "y x"
+            var_attrs["grid_mapping"] = "fixedgrid_projection"
+            var_attrs["units"] = "%"  # This should change based off metadata
+            var_attrs["_Unsigned"] = "true"  # Possibly incorrect
+
             tile = xr.Dataset(
                 data_vars={
                     product_name: (("y", "x"), sub_da.values, var_attrs),
@@ -209,6 +216,16 @@ def split_dataset(
                     "x": ("x", x_1d, {"long_name": "longitude"}),
                 },
             )
+
+            tile["x"].attrs["axis"] = "X"
+            tile["x"].attrs["standard_name"] = "projection_x_coordinate"
+            tile["x"].attrs["units"] = "m"  # the original data was in 'rad' though
+            tile["x"].attrs["_Unsigned"] = "true"
+
+            tile["y"].attrs["axis"] = "Y"
+            tile["y"].attrs["standard_name"] = "projection_y_coordinate"
+            tile["y"].attrs["units"] = "m"  # the original data was in 'rad' though
+            tile["y"].attrs["_Unsigned"] = "true"
 
             # Global attrs via your Fortran-matching builder:
             # NOTE: pass pixel offsets (y_start, x_start), not tile indices (i, j)
@@ -321,14 +338,11 @@ def _build_tile_attrs(
     subpoint_lon = float(sat_consts["longitude"])
     sat_alt_m = float(sat_consts["altitude"])
 
-    if not hasattr(ds, "area_definition"):
-        raise AttributeError("Dataset is missing 'area_definition' for source_scene derivation.")
-    area_def = ds.area_definition
     # Prefer area_id; if it doesn't exist, error.
-    scene = getattr(area_def, "area_id", None)
-    if scene is None:
-        raise AttributeError("area_definition must expose 'area_id' for source_scene.")
-    source_scene = str(scene)
+    area_id = getattr(ds, "area_id", None)
+    if area_id is None:
+        raise AttributeError("Dataset is missing 'area_id'.")
+    source_scene = str(area_id)
 
     if not hasattr(ds, "start_datetime"):
         raise AttributeError("Dataset is missing 'start_datetime'.")
