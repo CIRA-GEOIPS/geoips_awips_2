@@ -12,11 +12,13 @@
 
 """Routines for writing AWIPS2 tiles."""
 import logging
+from datetime import datetime, date, timezone
 from pathlib import Path
 import xarray as xr
 import numpy as np
 from geoips.filenames.base_paths import PATHS as GPATHS
-from datetime import datetime, date, timezone
+from geoips_awips_2.plugins.modules.filename_formatters.awips_tiles_fname \
+    import PLATFORM_NAME_MAPPING
 
 # TODO: Remove the following debug statement
 from ipdb import set_trace as shell
@@ -95,7 +97,6 @@ def call(
     List[str]
         Paths of written NetCDF files
     """
-    shell()
     if len(output_fnames) != 1:
         raise ValueError("output_fnames must be a 1-length list containing 'tilenum'")
 
@@ -103,24 +104,25 @@ def call(
     if "tilenum" not in fname_template:
         raise ValueError("The output filename template must contain 'tilenum'")
 
+    var = xarray_dict[product_name]
+    y_dim, x_dim = var.dims[-2], var.dims[-1]
+    ny, nx = var.sizes[y_dim], var.sizes[x_dim]
+
     # If a target is provided, compute the padded target
     if (total_pixel_height is not None) or (total_pixel_width is not None):
-        var = xarray_dict[product_name]
-        y_dim, x_dim = var.dims[-2], var.dims[-1]
-        ny, nx = var.sizes[y_dim], var.sizes[x_dim]
 
         target_h = total_pixel_height if total_pixel_height is not None else ny
         target_w = total_pixel_width if total_pixel_width is not None else nx
 
         # Never shrink; only pad
-        target_h = max(target_h, ny)
-        target_w = max(target_w, nx)
+        ny = max(target_h, ny)
+        nx = max(target_w, nx)
 
         # Error if the target size is incompatible with the tiling layout
-        rem = target_h % tile_nrows
+        rem = ny % tile_nrows
         if rem != 0:
             raise ValueError("`target_pixel_height` must be divisible by `tile_nrows`")
-        rem = target_w % tile_ncols
+        rem = nx % tile_ncols
         if rem != 0:
             raise ValueError("`target_pixel_width` must be divisible by `tile_ncols`")
 
@@ -128,11 +130,23 @@ def call(
         xarray_dict = _pad_to_target(
             xarray_dict,
             product_name,
-            target_h,
-            target_w,
+            ny,
+            nx,
             lat_name="latitude",
             lon_name="longitude"
         )
+
+    llx, lly, urx, ury = area_def.area_extent
+
+    dx = (urx - llx) / float(nx)
+    dy = (ury - lly) / float(ny)
+
+    x_scale = dx
+    x_offset = llx + dx / 2.0
+
+    y_scale = -dy
+    y_offset = ury - dy / 2.0
+    shell()
 
     # Generate tiles
     tiles = split_dataset(
@@ -141,6 +155,10 @@ def call(
         title=title,
         ncols=tile_ncols,
         nrows=tile_nrows,
+        x_scale=x_scale,
+        x_offset=x_offset,
+        y_scale=y_scale,
+        y_offset=y_offset,
     )
 
     written_files = []
@@ -150,7 +168,15 @@ def call(
         fpath = Path(fname)
 
         # Write NetCDF
-        enc = build_tile_encodings(tile, product_name, fill_value=fill_value)
+        enc = build_tile_encodings(
+            tile,
+            product_name,
+            fill_value=fill_value,
+            x_scale=x_scale,
+            x_offset=x_offset,
+            y_scale=y_scale,
+            y_offset=y_offset,
+        )
         tile.to_netcdf(fpath, engine="netcdf4", encoding=enc)
 
         written_files.append(str(fpath))
@@ -177,6 +203,10 @@ def split_dataset(
     lat_name="latitude",
     lon_name="longitude",
     title=None,
+    x_offset=None,
+    x_scale=None,
+    y_offset=None,
+    y_scale=None
 ):
     """Split an xarray Dataset variable into tiles.
 
@@ -202,6 +232,11 @@ def split_dataset(
     list of xr.Dataset
         List of smaller datasets (ncols * nrows).
     """
+    if None in (x_offset, x_scale, y_offset, y_scale):
+        raise ValueError(
+            "split_dataset requires x/y offset/scale derived from area_def"
+        )
+
     da = ds[product_name]
     sat_consts = SATELLITE_CONSTANTS.get(ds.platform_name)
     # Identify data dims (assume last two are spatial)
@@ -211,7 +246,6 @@ def split_dataset(
     # Robust tile edges (covers remainders in last tiles)
     y_edges = np.linspace(0, ny, nrows + 1, dtype=int)
     x_edges = np.linspace(0, nx, ncols + 1, dtype=int)
-
     tiles = []
     for i in range(nrows):
         for j in range(ncols):
@@ -232,8 +266,12 @@ def split_dataset(
             lon2d = ds[lon_name].isel(
                 {y_dim: slice(y_start, y_end), x_dim: slice(x_start, x_end)}
             )
-            y_1d = lat2d.isel({x_dim: 0}).values  # shape (tile_rows,)
-            x_1d = lon2d.isel({y_dim: 0}).values  # shape (tile_cols,)
+            tile_lat_1d = lat2d.isel({x_dim: 0}).values  # shape (tile_rows,)
+            tile_lon_1d = lon2d.isel({y_dim: 0}).values  # shape (tile_cols,)
+            x_idx = np.arange(x_start, x_end, dtype=np.float64)
+            y_idx = np.arange(y_start, y_end, dtype=np.float64)
+            x_m = x_offset + x_scale * x_idx
+            y_m = y_offset + y_scale * y_idx
 
             # Build tile dataset: product variable uses ('y','x'); coords are 1D
             var_attrs = _sanitize_attrs(sub_da.attrs)
@@ -247,19 +285,19 @@ def split_dataset(
                     product_name: (("y", "x"), sub_da.values, var_attrs),
                 },
                 coords={
-                    "y": ("y", y_1d, {"long_name": "latitude"}),
-                    "x": ("x", x_1d, {"long_name": "longitude"}),
+                    "y": ("y", y_m),
+                    "x": ("x", x_m),
                 },
             )
 
             tile["x"].attrs["axis"] = "X"
             tile["x"].attrs["standard_name"] = "projection_x_coordinate"
-            tile["x"].attrs["units"] = "m"  # the original data was in 'rad' though
+            tile["x"].attrs["units"] = "meters"  # the original data was in 'rad' though
             tile["x"].attrs["_Unsigned"] = "true"
 
             tile["y"].attrs["axis"] = "Y"
             tile["y"].attrs["standard_name"] = "projection_y_coordinate"
-            tile["y"].attrs["units"] = "m"  # the original data was in 'rad' though
+            tile["y"].attrs["units"] = "meters"  # the original data was in 'rad' though
             tile["y"].attrs["_Unsigned"] = "true"
 
             # Global attrs via your Fortran-matching builder:
@@ -269,8 +307,8 @@ def split_dataset(
                 product_name,
                 y_start,  # tile_row_offset (pixels)
                 x_start,  # tile_column_offset (pixels)
-                y_1d,  # tile_lat (1D)
-                x_1d,  # tile_lon (1D)
+                tile_lat_1d,  # tile_lat (1D)
+                tile_lon_1d,  # tile_lon (1D)
             )
 
             # Add fixedgrid_projection scalar variable
@@ -312,7 +350,7 @@ def _build_tile_attrs(
     ncols=8,
     nrows=10,
     resolution=0.5,
-    datetime_pattern="%Y-%m-%dT%H:%M:%S.%fZ",
+    datetime_pattern="%Y%m%d%H%M%S",
     title=None,
 ):
     """Construct attributes matching Fortran make_GEGEOC_ECFG_tiles.f90 output.
@@ -337,7 +375,7 @@ def _build_tile_attrs(
         Number of tiles along the y-direction in the full product.
     resolution : float, default=0.5
         Kilometers per pixel.
-    datetime_pattern : str, default="YYYY-mm-ddTHH:MM:SS.fZ"
+    datetime_pattern : str, default="YYYYmmddHHMMSS"
         Display pattern used for times.
     title : str, optional
         Title for global attributes. If None, a default will be generated.
@@ -528,6 +566,10 @@ def build_tile_encodings(
     y_name="y",
     fill_value=INT16_FILL,
     codes_max=32767,
+    x_offset=None,
+    x_scale=None,
+    y_offset=None,
+    y_scale=None
 ):
     """Build combined encodings for product, x, and y variables in a tile.
 
@@ -555,22 +597,29 @@ def build_tile_encodings(
     dict
         Mapping of variable name -> encoding dict suitable for to_netcdf().
     """
+    if None in (x_scale, x_offset, y_scale, y_offset):
+        raise ValueError(
+            "build_tile_encodings requires x/y scale+offset (derived from area_def)"
+        )
+
     encodings = {}
     encodings[product_name] = build_int16_encoding(
         tile_dataset[product_name],
         fill_value=fill_value,
         codes_max=codes_max,
     )
-    encodings[x_name] = build_int16_encoding(
-        tile_dataset[x_name],
-        fill_value=fill_value,
-        codes_max=codes_max,
-    )
-    encodings[y_name] = build_int16_encoding(
-        tile_dataset[y_name],
-        fill_value=fill_value,
-        codes_max=codes_max,
-    )
+    encodings[x_name] = {
+        "dtype": "int16",
+        "_FillValue": np.int16(-1),
+        "scale_factor": np.float32(x_scale),
+        "add_offset": np.float32(x_offset),
+    }
+    encodings[y_name] = {
+        "dtype": "int16",
+        "_FillValue": np.int16(-1),
+        "scale_factor": np.float32(y_scale),
+        "add_offset": np.float32(y_offset),
+    }
     return encodings
 
 
@@ -601,33 +650,29 @@ def _pad_to_target(ds, product_name, target_h, target_w, lat_name="latitude", lo
     pad_left = dx // 2
     pad_right = dx - pad_left
 
-    pad_spec = {y_dim: (pad_top, pad_bottom), x_dim: (pad_left, pad_right)}
+    new_vars = {}
+    for name, da in ds.data_vars.items():
+        pad_spec = {}
+        if y_dim in da.dims:
+            pad_spec[y_dim] = (pad_top, pad_bottom)
+        if x_dim in da.dims:
+            pad_spec[x_dim] = (pad_left, pad_right)
+        if pad_spec:
+            new_vars[name] = da.pad(pad_width=pad_spec, constant_values=np.nan)
+        else:
+            new_vars[name] = da
 
-    padded = ds.copy()
+    # preserve coords (pad if they use the dims, else keep)
+    new_coords = {}
+    for name, da in ds.coords.items():
+        pad_spec = {}
+        if y_dim in da.dims:
+            pad_spec[y_dim] = (pad_top, pad_bottom)
+        if x_dim in da.dims:
+            pad_spec[x_dim] = (pad_left, pad_right)
+        if pad_spec:
+            new_coords[name] = da.pad(pad_width=pad_spec, constant_values=np.nan)
+        else:
+            new_coords[name] = da
 
-    # Pad the product variable
-    if product_name in padded:
-        padded[product_name] = padded[product_name].pad(
-            pad_width=pad_spec,
-            constant_values=np.nan,
-        )
-
-    # Pad latitude if present
-    if lat_name in padded:
-        lat_da = padded[lat_name]
-        if lat_da.dims[-2:] == (y_dim, x_dim):
-            padded[lat_name] = lat_da.pad(
-                pad_width=pad_spec,
-                constant_values=np.nan,
-            )
-
-    # Pad longitude if present
-    if lon_name in padded:
-        lon_da = padded[lon_name]
-        if lon_da.dims[-2:] == (y_dim, x_dim):
-            padded[lon_name] = lon_da.pad(
-                pad_width=pad_spec,
-                constant_values=np.nan,
-            )
-
-    return padded
+    return xr.Dataset(data_vars=new_vars, coords=new_coords, attrs=ds.attrs)

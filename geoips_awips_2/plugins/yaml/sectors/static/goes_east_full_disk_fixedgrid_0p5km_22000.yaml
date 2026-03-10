@@ -1,0 +1,38 @@
+interface: sectors
+family: area_definition_static
+name: goes_east_full_disk_fixedgrid_0p5km_22000
+docstring: |
+  GOES-East / GOES-19 Full Disk (fixed grid)
+  ~0.5 km pixel size, 22000 x 22000, centered near lon_0=-75.2
+metadata:
+  region:
+    continent: Global
+    country: x
+    area: GOES-East
+    subarea: Full Disk
+    state: x
+    city: x
+spec:
+  area_id: goes_east_full_disk_fixedgrid_0p5km_22000
+  description: |
+    GOES-East / GOES-19 Full Disk fixed grid
+    ~0.5 km pixels, 22000 x 22000
+  # Geostationary fixed grid projection (GOES-R style)
+  projection:
+    proj: geos
+    lat_0: 0
+    lon_0: -75.2
+    h: 35786023.0
+    sweep: x
+    a: 6378137.0
+    b: 6356752.31414
+    units: m
+  resolution:
+    - 501
+    - 501
+  shape:
+    height: 22000
+    width: 22000
+  area_extent:
+    lower_left_xy: [-5434895, -5587200]
+    upper_right_xy: [5587200, 5434895]
